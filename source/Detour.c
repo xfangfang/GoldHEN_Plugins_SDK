@@ -45,9 +45,19 @@ InstructionPatch movRaxPatch = {
         .originInstructionPatternSize = 3,
 };
 
+InstructionPatch leaRcxPatch = {
+        .name = "lea_rcx",
+        .originInstructionSize = 7,
+        .patchInstruction = {0x48, 0xB9, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+        .patchInstructionSize = 10,
+        .originInstructionPattern = {0x48, 0x8D, 0x0D},
+        .originInstructionPatternSize = 3,
+};
+
 static const InstructionPatch *const PatchList[] = {
         &jmpPatch,
         &movRaxPatch,
+        &leaRcxPatch,
 };
 
 size_t Detour_GetInstructionSize(Detour *This, uint64_t Address, size_t MinSize) {
