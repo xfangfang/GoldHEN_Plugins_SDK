@@ -219,7 +219,7 @@ void Detour_RestoreFunction(Detour *This) {
         switch (This->Mode) {
             case DetourMode_x32:
                 RestorePtr = This->FunctionPtr;
-                RestoreSize = This->StubSize - sizeof(This->JumpInstructions32);
+                RestoreSize = This->StubSize - sizeof(This->JumpInstructions64);
                 break;
             
             case DetourMode_x64:

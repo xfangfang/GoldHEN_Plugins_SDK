@@ -92,7 +92,7 @@ clean:
 	rm -rf $(TARGET) $(TARGETSTUB) $(INTDIR) $(OBJS) $(TARGETCRT) $(TARGETSTATIC)
 
 crt:
-	@mkdir build
+	@mkdir -p build
 	$(CC) -target x86_64-pc-linux-gnu -ffreestanding -nostdlib -fno-builtin -fPIC -isysroot $(TOOLCHAIN) -isystem $(TOOLCHAIN)/include -c crt/crtprx.c -o $(TARGETCRT)
 
 install: all
