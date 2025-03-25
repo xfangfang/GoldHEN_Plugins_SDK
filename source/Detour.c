@@ -23,18 +23,57 @@ void Detour_RestoreFunction(Detour *This);
 void Detour_Construct(Detour *This, DetourMode Mode);
 void Detour_Destroy(Detour *This);
 
+#define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
+#define R_ADDRESS_SIZE 4
+#define A_ADDRESS_SIZE 8
+
+InstructionPatch jmpPatch = {
+        .name = "jmp",
+        .originInstructionSize = 5,
+        .patchInstruction = {0xFF, 0x25, 0x00, 0x00, 0x00, 0x00, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90},
+        .patchInstructionSize = 14,
+        .originInstructionPattern = {0xE9},
+        .originInstructionPatternSize = 1,
+};
+
+InstructionPatch movRaxPatch = {
+        .name = "mov_rax",
+        .originInstructionSize = 7,
+        .patchInstruction = {0x48, 0xA1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+        .patchInstructionSize = 10,
+        .originInstructionPattern = {0x48, 0x8B, 0x05},
+        .originInstructionPatternSize = 3,
+};
+
+static const InstructionPatch *const PatchList[] = {
+        &jmpPatch,
+        &movRaxPatch,
+};
+
 size_t Detour_GetInstructionSize(Detour *This, uint64_t Address, size_t MinSize) {
     size_t InstructionSize = 0;
-
+    uint32_t temp;
     if (!Address) return 0;
 
+    This->LastInstructionPatch = NULL;
     while (InstructionSize < MinSize) {
         hde64s hs;
-        uint32_t temp = hde64_disasm((void *) (Address + InstructionSize), &hs);
+        temp = hde64_disasm((void *) (Address + InstructionSize), &hs);
 
         if (hs.flags & F_ERROR) return 0;
 
         InstructionSize += temp;
+    }
+
+    uint32_t LastInstructionSize = temp;
+    void *LastInstruction = (void *) (Address + InstructionSize - LastInstructionSize);
+    for (int i = 0; i < ARRAY_SIZE(PatchList); i++) {
+        if (LastInstructionSize == PatchList[i]->originInstructionSize &&
+            memcmp(LastInstruction, PatchList[i]->originInstructionPattern,
+                   PatchList[i]->originInstructionPatternSize) == 0) {
+            This->LastInstructionPatch = PatchList[i];
+            break;
+        }
     }
 
     return InstructionSize;
@@ -187,6 +226,10 @@ void *Detour_DetourFunction32(Detour *This, uint64_t FunctionPtr, void *HookPtr)
     //Allocate Executable memory for stub and write instructions to stub and a jump back to original execution.
     This->StubSize = (InstructionSize + sizeof(This->JumpInstructions64));
 
+    if (This->LastInstructionPatch != NULL) {
+        This->StubSize += This->LastInstructionPatch->patchInstructionSize;
+    }
+
     int res = sceKernelMmap(0, This->StubSize, VM_PROT_ALL, 0x1000 | 0x2, -1, 0, &This->StubPtr);
 
     if (res < 0 || This->StubPtr == 0) {
@@ -196,8 +239,42 @@ void *Detour_DetourFunction32(Detour *This, uint64_t FunctionPtr, void *HookPtr)
         return 0;
     }
 
-    memcpy(This->StubPtr, (void *) FunctionPtr, InstructionSize);
-    Detour_WriteJump64(This, (void *) ((uint64_t)This->StubPtr + InstructionSize), (uint64_t)(FunctionPtr + InstructionSize));
+    if (This->LastInstructionPatch) {
+        // Stub: [Origin function code without last line] [last line patch] [Jump to (origin function + InstructionSize)] [Origin function code last line]
+#if (DEBUG) == 1
+        klog("[Detour] %s: Using %s instruction patch\n", __FUNCTION__, This->LastInstructionPatch->name);
+#endif
+        size_t InstructionSizeWithoutLastLine = InstructionSize - This->LastInstructionPatch->originInstructionSize;
+        void *lastInstructionOrignPtr = (void *) FunctionPtr + InstructionSizeWithoutLastLine;
+        void *lastInstructionStubPtr = This->StubPtr + InstructionSizeWithoutLastLine;
+        // Copy origin function code without last line to stub
+        memcpy(This->StubPtr, (void *) FunctionPtr, InstructionSizeWithoutLastLine);
+        // Get relative address from original instruction
+        int32_t offset = 0;
+        memcpy(&offset, (void *) FunctionPtr + InstructionSize - R_ADDRESS_SIZE, R_ADDRESS_SIZE);
+        // Calculate absolute address
+        void *AbsoluteAddress = (void *) FunctionPtr + InstructionSize + offset;
+        // Write patch instruction
+        memcpy(lastInstructionStubPtr,
+               This->LastInstructionPatch->patchInstruction,
+               This->LastInstructionPatch->patchInstructionSize - A_ADDRESS_SIZE);
+        memcpy(lastInstructionStubPtr + This->LastInstructionPatch->patchInstructionSize - A_ADDRESS_SIZE,
+               &AbsoluteAddress,
+               A_ADDRESS_SIZE);
+        // Write jump to original function
+        Detour_WriteJump64(This, (void *) ((uint64_t) This->StubPtr + InstructionSizeWithoutLastLine +
+                                           This->LastInstructionPatch->patchInstructionSize),
+                           (uint64_t) (FunctionPtr + InstructionSize));
+        // Backup last instruction
+        memcpy(This->StubPtr + This->StubSize - This->LastInstructionPatch->originInstructionSize,
+               lastInstructionOrignPtr,
+               This->LastInstructionPatch->originInstructionSize);
+    } else {
+        // Stub: [Origin function code] [Jump to (origin function + InstructionSize)]
+        memcpy(This->StubPtr, (void *) FunctionPtr, InstructionSize);
+        Detour_WriteJump64(This, (void *) ((uint64_t) This->StubPtr + InstructionSize),
+                           (uint64_t) (FunctionPtr + InstructionSize));
+    }
 
     // Write jump from function to hook.
     memset((void *) FunctionPtr, 0x90, InstructionSize);
@@ -220,6 +297,14 @@ void Detour_RestoreFunction(Detour *This) {
             case DetourMode_x32:
                 RestorePtr = This->FunctionPtr;
                 RestoreSize = This->StubSize - sizeof(This->JumpInstructions64);
+                if (This->LastInstructionPatch) {
+                    // Restore original last instruction
+                    RestoreSize -= This->LastInstructionPatch->patchInstructionSize;
+                    size_t InstructionSize = RestoreSize;
+                    memcpy(This->StubPtr + InstructionSize - This->LastInstructionPatch->originInstructionSize,
+                           This->StubPtr + This->StubSize - This->LastInstructionPatch->originInstructionSize,
+                           This->LastInstructionPatch->originInstructionSize);
+                }
                 break;
             
             case DetourMode_x64:

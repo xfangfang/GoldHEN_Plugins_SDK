@@ -19,6 +19,15 @@ extern "C" {
 #include <stdint.h>
 #include <stdlib.h>
 
+typedef struct InstructionPatch {
+    char *name;
+    uint8_t originInstructionSize;
+    uint8_t patchInstruction[15];
+    uint8_t patchInstructionSize;
+    uint8_t originInstructionPattern[15];
+    uint8_t originInstructionPatternSize;
+} InstructionPatch;
+
 typedef enum _GHSDK_DetourMode {
     DetourMode_x64,
     DetourMode_x32
@@ -31,6 +40,7 @@ typedef struct _GHSDK_Detour {
     void *FunctionPtr;
     void *TrampolinePtr;
     void *HookPtr;
+    const InstructionPatch *LastInstructionPatch;
     uint8_t JumpInstructions64[14];  // jmp QWORD PTR[Address]
     uint8_t JumpInstructions32[05];  // jmp 32
 } Detour;
