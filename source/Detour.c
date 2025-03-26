@@ -45,6 +45,24 @@ InstructionPatch movRaxPatch = {
         .originInstructionPatternSize = 3,
 };
 
+InstructionPatch leaRaxPatch = {
+        .name = "lea_rax",
+        .originInstructionSize = 7,
+        .patchInstruction = {0x48, 0xB8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+        .patchInstructionSize = 10,
+        .originInstructionPattern = {0x48, 0x8D, 0x05},
+        .originInstructionPatternSize = 3,
+};
+
+InstructionPatch leaRbxPatch = {
+        .name = "lea_rbx",
+        .originInstructionSize = 7,
+        .patchInstruction = {0x48, 0xBB, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+        .patchInstructionSize = 10,
+        .originInstructionPattern = {0x48, 0x8D, 0x1D},
+        .originInstructionPatternSize = 3,
+};
+
 InstructionPatch leaRcxPatch = {
         .name = "lea_rcx",
         .originInstructionSize = 7,
@@ -57,6 +75,8 @@ InstructionPatch leaRcxPatch = {
 static const InstructionPatch *const PatchList[] = {
         &jmpPatch,
         &movRaxPatch,
+        &leaRaxPatch,
+        &leaRbxPatch,
         &leaRcxPatch,
 };
 
